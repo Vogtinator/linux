@@ -50,6 +50,7 @@
 
 	aliases {
 		serial0 = &uart0;
+		ethernet0 = &emac;
 	};
 
 	chosen {
@@ -71,4 +72,20 @@
 
 &i2c1_pins {
 	allwinner,pull = <SUN4I_PINCTRL_PULL_UP>;
+};
+
+&mdio {
+	ext_phy: ethernet-phy@1 {
+		reg = <0>;
+	};
+};
+
+&emac {
+	pinctrl-names = "default";
+	pinctrl-0 = <&emac_rmii_pins>;
+	phy-handle = <&ext_phy>;
+	phy-mode = "rmii";
+
+	allwinner,leds-active-low;
+	status = "okay";
 };

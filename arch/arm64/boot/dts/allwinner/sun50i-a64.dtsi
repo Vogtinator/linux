@@ -131,6 +131,11 @@
 			#reset-cells = <1>;
 		};
 
+		syscon: syscon@01c00000 {
+			compatible = "syscon";
+			reg = <0x01c00000 0x34>;
+		};
+
 		pio: pinctrl@1c20800 {
 			compatible = "allwinner,sun50i-a64-pinctrl";
 			reg = <0x01c20800 0x400>;
@@ -151,6 +156,24 @@
 			uart0_pins_a: uart0@0 {
 				allwinner,pins = "PB8", "PB9";
 				allwinner,function = "uart0";
+			};
+
+			emac_rmii_pins: emac0@0 {
+				allwinner,pins = "PD10", "PD11", "PD13", "PD14",
+						 "PD17", "PD18", "PD19", "PD20",
+						 "PD22", "PD23";
+				allwinner,function = "emac";
+				allwinner,drive = <SUN4I_PINCTRL_40_MA>;
+				allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
+			};
+			emac_rgmii_pins: emac0@1 {
+				allwinner,pins = "PD8",  "PD9",  "PD10", "PD11",
+						 "PD12", "PD13", "PD15", "PD16",
+						 "PD17", "PD18", "PD19", "PD20",
+						 "PD21", "PD22", "PD23";
+				allwinner,function = "emac";
+				allwinner,drive = <SUN4I_PINCTRL_40_MA>;
+				allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
 			};
 		};
 
@@ -253,6 +276,24 @@
 			#interrupt-cells = <3>;
 		};
 
+		emac: ethernet@1c30000 {
+			compatible = "allwinner,sun8i-h3-emac";
+			syscon = <&syscon>;
+			reg = <0x01c30000 0x104>;
+			interrupts = <GIC_SPI 82 IRQ_TYPE_LEVEL_HIGH>;
+			resets = <&ccu RST_BUS_EMAC>;
+			reset-names = "ahb";
+			clocks = <&ccu CLK_BUS_EMAC>;
+			clock-names = "ahb";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+
+			mdio: mdio {
+				#address-cells = <1>;
+				#size-cells = <0>;
+			};
+		};
 		rtc: rtc@1f00000 {
 			compatible = "allwinner,sun6i-a31-rtc";
 			reg = <0x01f00000 0x54>;
