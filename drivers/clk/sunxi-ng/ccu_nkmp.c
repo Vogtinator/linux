@@ -29,7 +29,7 @@ static void ccu_nkmp_find_best(unsigned long parent, unsigned long rate,
 
 	for (_k = nkmp->min_k; _k <= nkmp->max_k; _k++) {
 		for (_n = nkmp->min_n; _n <= nkmp->max_n; _n++) {
-			for (_m = nkmp->min_m; _n <= nkmp->max_m; _m++) {
+			for (_m = nkmp->min_m; _m <= nkmp->max_m; _m++) {
 				for (_p = nkmp->min_p; _p <= nkmp->max_p; _p <<= 1) {
 					unsigned long tmp_rate;
 

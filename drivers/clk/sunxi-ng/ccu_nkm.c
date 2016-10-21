@@ -28,7 +28,7 @@ static void ccu_nkm_find_best(unsigned long parent, unsigned long rate,
 
 	for (_k = nkm->min_k; _k <= nkm->max_k; _k++) {
 		for (_n = nkm->min_n; _n <= nkm->max_n; _n++) {
-			for (_m = nkm->min_m; _n <= nkm->max_m; _m++) {
+			for (_m = nkm->min_m; _m <= nkm->max_m; _m++) {
 				unsigned long tmp_rate;
 
 				tmp_rate = parent * _n * _k / _m;
