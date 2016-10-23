@@ -91,6 +91,18 @@
 	status = "okay";
 };
 
+&usbphy {
+	status = "okay";
+};
+
+&ehci1 {
+	status = "okay";
+};
+
+&ohci1 {
+	status = "okay";
+};
+
 &mdio {
 	ext_phy: ethernet-phy@1 {
 		reg = <0>;
