@@ -103,6 +103,11 @@
 	status = "okay";
 };
 
+&usb_otg {
+	dr_mode = "host";
+	status = "okay";
+};
+
 &mdio {
 	ext_phy: ethernet-phy@1 {
 		reg = <0>;
