@@ -104,7 +104,7 @@
 };
 
 &usb_otg {
-	dr_mode = "host";
+	dr_mode = "peripheral";
 	status = "okay";
 };
 
