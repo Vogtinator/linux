@@ -51,6 +51,7 @@ set_debarch() {
 		debarch=hppa ;;
 	mips*)
 		debarch=mips$(grep -q CPU_LITTLE_ENDIAN=y $KCONFIG_CONFIG && echo el || true) ;;
+	aarch64)
 	arm64)
 		debarch=arm64 ;;
 	arm*)
