@@ -3635,6 +3635,33 @@ static const struct panel_desc tianma_tm070rvhg71 = {
 	.connector_type = DRM_MODE_CONNECTOR_LVDS,
 };
 
+static const struct drm_display_mode ti_nspire_cx2_lcd_mode[] = {
+	{
+		.clock = 6000,
+		.hdisplay = 240,
+		.hsync_start = 240 + 10,
+		.hsync_end = 240 + 10 + 10,
+		.htotal = 240 + 10 + 10 + 21,
+		.vdisplay = 320,
+		.vsync_start = 320 + 28,
+		.vsync_end = 320 + 28 + 1,
+		.vtotal = 320 + 28 + 1 + 7,
+		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
+	},
+};
+
+static const struct panel_desc ti_nspire_cx2_lcd_panel = {
+	.modes = ti_nspire_cx2_lcd_mode,
+	.num_modes = 1,
+	.bpc = 8,
+	.size = {
+		.width = 49,
+		.height = 65,
+	},
+	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
+	.bus_flags = DRM_BUS_FLAG_PIXDATA_SAMPLE_POSEDGE,
+};
+
 static const struct drm_display_mode ti_nspire_cx_lcd_mode[] = {
 	{
 		.clock = 6000,
@@ -4267,6 +4294,9 @@ static const struct of_device_id platform_of_match[] = {
 	}, {
 		.compatible = "tianma,tm070rvhg71",
 		.data = &tianma_tm070rvhg71,
+	}, {
+		.compatible = "ti,nspire-cx2-lcd-panel",
+		.data = &ti_nspire_cx2_lcd_panel,
 	}, {
 		.compatible = "ti,nspire-cx-lcd-panel",
 		.data = &ti_nspire_cx_lcd_panel,
