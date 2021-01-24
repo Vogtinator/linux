@@ -849,6 +849,7 @@ dtb-$(CONFIG_ARCH_NOMADIK) += \
 	ste-nomadik-nhk15.dtb
 dtb-$(CONFIG_ARCH_NSPIRE) += \
 	nspire-cx.dtb \
+	nspire-cx2.dtb \
 	nspire-tp.dtb \
 	nspire-clp.dtb
 dtb-$(CONFIG_ARCH_OMAP2) += \
