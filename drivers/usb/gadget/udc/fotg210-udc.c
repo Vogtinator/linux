@@ -12,6 +12,7 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -1225,9 +1226,18 @@ err:
 	return ret;
 }
 
+#ifdef CONFIG_OF
+static const struct of_device_id fotg210_udc_of_match[] = {
+	{ .compatible = "faraday,fotg210-udc" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, fotg210_udc_of_match);
+#endif
+
 static struct platform_driver fotg210_driver = {
 	.driver		= {
 		.name =	udc_name,
+		.of_match_table = fotg210_udc_of_match,
 	},
 	.probe		= fotg210_udc_probe,
 	.remove		= fotg210_udc_remove,
