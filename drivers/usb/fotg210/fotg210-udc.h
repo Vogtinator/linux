@@ -58,6 +58,7 @@
 
 /* Device Mask of Interrupt Group Register (0x130) */
 #define FOTG210_DMIGR		0x130
+#define DMIGR_MINT_FDMA		(1 << 3)
 #define DMIGR_MINT_G2		(1 << 2)
 #define DMIGR_MINT_G1		(1 << 1)
 #define DMIGR_MINT_G0		(1 << 0)
@@ -93,6 +94,7 @@
 
 /* Device Interrupt group Register (0x140) */
 #define FOTG210_DIGR		0x140
+#define DIGR_INT_FDMA		(1 << 3)
 #define DIGR_INT_G2		(1 << 2)
 #define DIGR_INT_G1		(1 << 1)
 #define DIGR_INT_G0		(1 << 0)
@@ -171,7 +173,7 @@
 #define FIFOMAP_EPNO(ep)	((ep) << ((ep) - 1) * 8)
 #define FIFOMAP_EPNOMSK(ep)	(0xF << ((ep) - 1) * 8)
 
-/* Device FIFO Confuguration Register (0x1AC) */
+/* Device FIFO Configuration Register (0x1AC) */
 #define FOTG210_FIFOCF		0x1AC
 #define FIFOCF_TYPE(type, fifo)	((type) << (fifo) * 8)
 #define FIFOCF_BLK_SIN(fifo)	(0x0 << (fifo) * 8 << 2)
@@ -209,6 +211,30 @@
 /* Device DMA Controller Parameter setting 3 Register (0x1CC) */
 #define FOTG210_CXPORT		0x1D0
 
+/* DMA channels for each FIFO (0 -> CXFIFO, 1 -> FIFO0, ...).
+ * Some devices use this instead of the other DMA registers.
+ */
+
+/* Control register for FIFO DMA channel X */
+#define FOTG210_FDMACTRL(fdma)	(0x300 + 8 * (fdma) + 0)
+#define FDMACTRL_LEN(len)	(((len) & 0xFFFF) << 8)
+#define FDMACTRL_ABORT		(1 << 3)
+#define FDMACTRL_TYPE(dir_in)	(((dir_in) ? 1 : 0) << 1)
+#define FDMACTRL_DMA_START	(1 << 0)
+#define FDMACTRL_DISDMA		0
+
+/* Address register for FIFO DMA channel X */
+#define FOTG210_FDMAADDR(fdma)	(0x300 + 8 * (fdma) + 4)
+
+/* Interrupt status register for FIFO DMA channels */
+#define FOTG210_FDMAISR		0x328
+#define FDMAISR_DONE_INT(fdma)	(1 << ((fdma) +  0))
+#define FDMAISR_ERR_INT(fdma)	(1 << ((fdma) + 16))
+
+/* Interrupt mask register for FIFO DMA channels */
+#define FOTG210_FDMAIMR		0x32C
+/* Same bits as FOTG210_FDMAISR */
+
 struct fotg210_request {
 	struct usb_request	req;
 	struct list_head	queue;
@@ -230,9 +256,21 @@ struct fotg210_ep {
 	const struct usb_endpoint_descriptor	*desc;
 };
 
+struct fotg210_model_data {
+	/* Whether this device uses multiple FDMA channels at FOTG210_FDMACTRL
+	 * instead of the single DMA channel at FOTG210_DMATFNR.
+	 */
+	u8			use_fdma;
+	/* If set, write a 1 instead of clearing the bit in the interrupt status
+	 * register for acking.
+	 */
+	u8			wr_1_to_ack;
+};
+
 struct fotg210_udc {
 	spinlock_t		lock; /* protect the struct */
 	void __iomem		*reg;
+	struct fotg210_model_data	data;
 
 	unsigned long		irq_trigger;
 
