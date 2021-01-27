@@ -12,8 +12,10 @@
 #include <linux/err.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -29,10 +31,15 @@ static const char * const fotg210_ep_name[] = {
 
 static void fotg210_ack_int(struct fotg210_udc *fotg210, u32 offset, u32 mask)
 {
-	u32 value = ioread32(fotg210->reg + offset);
+	u32 value;
 
-	value &= ~mask;
-	iowrite32(value, fotg210->reg + offset);
+	if (fotg210->data.wr_1_to_ack) {
+		iowrite32(mask, fotg210->reg + offset);
+	} else {
+		value = ioread32(fotg210->reg + offset);
+		value &= ~mask;
+		iowrite32(value, fotg210->reg + offset);
+	}
 }
 
 static void fotg210_disable_fifo_int(struct fotg210_ep *ep)
@@ -332,6 +339,95 @@ dma_reset:
 	}
 }
 
+static void fotg210_enable_fdma(struct fotg210_ep *ep,
+			      dma_addr_t d, u32 len)
+{
+	u32 value;
+	struct fotg210_udc *fotg210 = ep->fotg210;
+
+	/* FDMA0 is for EP0, for others FDMAn -> FIFOn -> EPn, so just: */
+	int fdma = ep->epnum;
+
+	/* set transfer length and direction */
+	value = FDMACTRL_LEN(len) | FDMACTRL_TYPE(ep->dir_in);
+	iowrite32(value, fotg210->reg + FOTG210_FDMACTRL(fdma));
+
+	/* set DMA memory address */
+	iowrite32(d, fotg210->reg + FOTG210_FDMAADDR(fdma));
+
+	/* enable FDMA_ERROR and FDMA_DONE interrupt */
+	value = ioread32(fotg210->reg + FOTG210_FDMAIMR);
+	value &= ~(FDMAISR_ERR_INT(fdma) | FDMAISR_DONE_INT(fdma));
+	iowrite32(value, fotg210->reg + FOTG210_FDMAIMR);
+
+	/* start FDMA */
+	value = ioread32(fotg210->reg + FOTG210_FDMACTRL(fdma));
+	value |= FDMACTRL_DMA_START;
+	iowrite32(value, fotg210->reg + FOTG210_FDMACTRL(fdma));
+}
+
+static void fotg210_disable_fdma(struct fotg210_ep *ep)
+{
+	int fdma = ep->epnum;
+
+	iowrite32(FDMACTRL_DISDMA, ep->fotg210->reg + FOTG210_FDMACTRL(fdma));
+}
+
+static void fotg210_wait_fdma_done(struct fotg210_ep *ep)
+{
+	u32 value;
+	int fdma = ep->epnum;
+	ktime_t timeout;
+
+	/* Loop until FDMA done or error/reset */
+	timeout = ktime_add_us(ktime_get(), 1000);
+	while (1) {
+		value = ioread32(ep->fotg210->reg + FOTG210_FDMAISR);
+		if (value & FDMAISR_DONE_INT(fdma)) {
+			/* Ack and return */
+			fotg210_ack_int(ep->fotg210, FOTG210_FDMAISR,
+					FDMAISR_DONE_INT(fdma));
+			return;
+		}
+
+		if (value & FDMAISR_ERR_INT(fdma)) {
+			fotg210_ack_int(ep->fotg210, FOTG210_FDMAISR,
+					FDMAISR_ERR_INT(fdma));
+			pr_warn("FDMA %d failed\n", fdma);
+			break;
+		}
+
+		value = ioread32(ep->fotg210->reg + FOTG210_DISGR2);
+		if (value & DISGR2_USBRST_INT) {
+			pr_info("USB reset during FDMA %d\n", fdma);
+			break;
+		}
+
+		if (ktime_compare(ktime_get(), timeout) > 0) {
+			pr_warn("FDMA %d timed out\n", fdma);
+			break;
+		}
+	}
+
+	/* Failure handling starts here */
+	value = ioread32(ep->fotg210->reg + FOTG210_FDMACTRL(fdma));
+	value |= FDMACTRL_ABORT;
+	iowrite32(value, ep->fotg210->reg + FOTG210_FDMACTRL(fdma));
+
+	/* reset fifo */
+	if (ep->epnum) {
+		value = ioread32(ep->fotg210->reg +
+				FOTG210_FIBCR(ep->epnum - 1));
+		value |= FIBCR_FFRST;
+		iowrite32(value, ep->fotg210->reg +
+				FOTG210_FIBCR(ep->epnum - 1));
+	} else {
+		value = ioread32(ep->fotg210->reg + FOTG210_DCFESR);
+		value |= DCFESR_CX_CLR;
+		iowrite32(value, ep->fotg210->reg + FOTG210_DCFESR);
+	}
+}
+
 static void fotg210_start_dma(struct fotg210_ep *ep,
 			struct fotg210_request *req)
 {
@@ -367,12 +463,15 @@ static void fotg210_start_dma(struct fotg210_ep *ep,
 		return;
 	}
 
-	fotg210_enable_dma(ep, d, length);
-
-	/* check if dma is done */
-	fotg210_wait_dma_done(ep);
-
-	fotg210_disable_dma(ep);
+	if (ep->fotg210->data.use_fdma) {
+		fotg210_enable_fdma(ep, d, length);
+		fotg210_wait_fdma_done(ep);
+		fotg210_disable_fdma(ep);
+	} else {
+		fotg210_enable_dma(ep, d, length);
+		fotg210_wait_dma_done(ep);
+		fotg210_disable_dma(ep);
+	}
 
 	/* update actual transfer length */
 	req->req.actual += length;
@@ -1028,8 +1127,13 @@ static void fotg210_init(struct fotg210_udc *fotg210)
 	u32 value;
 
 	/* disable global interrupt and set int polarity to active high */
-	iowrite32(GMIR_MHC_INT | GMIR_MOTG_INT | GMIR_INT_POLARITY,
-		  fotg210->reg + FOTG210_GMIR);
+	value = GMIR_MHC_INT | GMIR_MOTG_INT;
+
+	/* On those controllers it seems to be the opposite? */
+	if (!fotg210->data.wr_1_to_ack)
+		value |= GMIR_INT_POLARITY;
+
+	iowrite32(value, fotg210->reg + FOTG210_GMIR);
 
 	/* mask interrupts for groups other than 0-2 */
 	iowrite32(~(DMIGR_MINT_G0 | DMIGR_MINT_G1 | DMIGR_MINT_G2),
@@ -1097,11 +1201,37 @@ static int fotg210_udc_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct fotg210_model_data fotg210_default_model = {
+	.use_fdma	= 0,
+	.wr_1_to_ack	= 0,
+};
+
+#ifdef CONFIG_OF
+static const struct fotg210_model_data fotg210_nspire_model = {
+	.use_fdma	= 1,
+	.wr_1_to_ack	= 1,
+};
+
+static const struct of_device_id fotg210_udc_of_match[] = {
+		{
+			.compatible = "faraday,fotg210-udc",
+			.data = &fotg210_default_model,
+		},
+		{
+			.compatible = "faraday,fotg210-nspire-udc",
+			.data = &fotg210_nspire_model,
+		},
+		{},
+};
+MODULE_DEVICE_TABLE(of, fotg210_udc_of_match);
+#endif
+
 static int fotg210_udc_probe(struct platform_device *pdev)
 {
 	struct resource *res, *ires;
 	struct fotg210_udc *fotg210 = NULL;
 	struct fotg210_ep *_ep[FOTG210_MAX_NUM_EP];
+	const struct fotg210_model_data *model_data = NULL;
 	int ret = 0;
 	int i;
 
@@ -1123,6 +1253,13 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 	fotg210 = kzalloc(sizeof(struct fotg210_udc), GFP_KERNEL);
 	if (fotg210 == NULL)
 		goto err;
+
+	model_data = of_device_get_match_data(&pdev->dev);
+	/* it's tiny, just do a copy */
+	if (model_data)
+		fotg210->data = *model_data;
+	else
+		fotg210->data = fotg210_default_model;
 
 	for (i = 0; i < FOTG210_MAX_NUM_EP; i++) {
 		_ep[i] = kzalloc(sizeof(struct fotg210_ep), GFP_KERNEL);
@@ -1223,18 +1360,10 @@ err:
 	return ret;
 }
 
-#ifdef CONFIG_OF
-static const struct of_device_id fotg210_udc_of_match[] = {
-	{ .compatible = "faraday,fotg210-udc" },
-	{},
-};
-MODULE_DEVICE_TABLE(of, fotg210_udc_of_match);
-#endif
-
 static struct platform_driver fotg210_driver = {
 	.driver		= {
 		.name =	udc_name,
-		.of_match_table = fotg210_udc_of_match,
+		.of_match_table = of_match_ptr(fotg210_udc_of_match),
 	},
 	.probe		= fotg210_udc_probe,
 	.remove		= fotg210_udc_remove,
