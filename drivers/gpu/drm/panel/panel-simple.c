@@ -3637,7 +3637,7 @@ static const struct panel_desc tianma_tm070rvhg71 = {
 
 static const struct drm_display_mode ti_nspire_cx_lcd_mode[] = {
 	{
-		.clock = 10000,
+		.clock = 6000,
 		.hdisplay = 320,
 		.hsync_start = 320 + 50,
 		.hsync_end = 320 + 50 + 6,
