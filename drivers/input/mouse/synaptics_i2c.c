@@ -326,7 +326,7 @@ static int synaptics_i2c_check_error(struct i2c_client *client)
 	status = i2c_smbus_read_byte_data(client, DEVICE_STATUS_REG) &
 		(CONFIGURED_MSK | ERROR_MSK);
 
-	if (status != CONFIGURED_MSK)
+	if (status != CONFIGURED_MSK && status != 0)
 		ret = synaptics_i2c_reset_config(client);
 
 	return ret;
