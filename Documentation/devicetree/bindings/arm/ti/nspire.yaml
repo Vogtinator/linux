@@ -8,6 +8,7 @@ title: TI-NSPIRE calculators
 
 maintainers:
   - Daniel Tang <dt.tangr@gmail.com>
+  - Fabian Vogt <fabian@ritter-vogt.de>
 
 properties:
   $nodename:
@@ -15,6 +16,8 @@ properties:
   compatible:
     items:
       - enum:
+          # CX II models
+          - ti,nspire-cx2
           # CX models
           - ti,nspire-cx
           # Touchpad models
