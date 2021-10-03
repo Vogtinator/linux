@@ -3856,6 +3856,33 @@ static const struct panel_desc ti_nspire_cx2_lcd_panel = {
 	.bus_flags = DRM_BUS_FLAG_PIXDATA_SAMPLE_POSEDGE,
 };
 
+static const struct drm_display_mode ti_nspire_cx_w_lcd_mode[] = {
+	{
+		.clock = 6000,
+		.hdisplay = 240,
+		.hsync_start = 240 + 51,
+		.hsync_end = 240 + 51 + 2,
+		.htotal = 240 + 51 + 2 + 39,
+		.vdisplay = 320,
+		.vsync_start = 320 + 2,
+		.vsync_end = 320 + 2 + 3,
+		.vtotal = 320 + 2 + 3 + 4,
+		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
+	},
+};
+
+static const struct panel_desc ti_nspire_cx_w_lcd_panel = {
+	.modes = ti_nspire_cx_w_lcd_mode,
+	.num_modes = 1,
+	.bpc = 8,
+	.size = {
+		.width = 49,
+		.height = 65,
+	},
+	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
+	.bus_flags = DRM_BUS_FLAG_PIXDATA_SAMPLE_POSEDGE | DRM_BUS_FLAG_DE_LOW,
+};
+
 static const struct drm_display_mode ti_nspire_cx_lcd_mode[] = {
 	{
 		.clock = 6000,
@@ -4487,6 +4514,9 @@ static const struct of_device_id platform_of_match[] = {
 	}, {
 		.compatible = "ti,nspire-cx2-lcd-panel",
 		.data = &ti_nspire_cx2_lcd_panel,
+	}, {
+		.compatible = "ti,nspire-cx-w-lcd-panel",
+		.data = &ti_nspire_cx_w_lcd_panel,
 	}, {
 		.compatible = "ti,nspire-cx-lcd-panel",
 		.data = &ti_nspire_cx_lcd_panel,
