@@ -84,10 +84,15 @@
 
 &vbus_reg {
 	gpio = <&gpio 2 0>;
+	// A bit of a hack:
+	// There are GPIOs for ID and VBus detection,
+	// but there is no driver for role switching, so gpio-usb-b-connector
+	// can't be used. So for now role (i.e. driver) and VBus have to be hardcoded.
+	regulator-always-on;
 };
 
 &usb0 {
-	compatible = "faraday,fotg210-nspire-udc";
+	compatible = "faraday,fotg210";
 };
 
 &usb1 {
