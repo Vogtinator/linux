@@ -5546,7 +5546,7 @@ static void fotg210_init(struct fotg210_hcd *fotg210)
 {
 	u32 value;
 
-	iowrite32(GMIR_MDEV_INT | GMIR_MOTG_INT | GMIR_INT_POLARITY,
+	iowrite32(GMIR_MDEV_INT | GMIR_MOTG_INT/* | GMIR_INT_POLARITY*/,
 			&fotg210->regs->gmir);
 
 	value = ioread32(&fotg210->regs->otgcsr);
