@@ -1142,21 +1142,14 @@ int fotg210_udc_remove(struct platform_device *pdev)
 	return 0;
 }
 
-int fotg210_udc_probe(struct platform_device *pdev)
+int fotg210_udc_probe(struct platform_device *pdev, struct fotg210 *fotg)
 {
-	struct resource *res;
 	struct fotg210_udc *fotg210 = NULL;
 	struct fotg210_ep *_ep[FOTG210_MAX_NUM_EP];
 	struct device *dev = &pdev->dev;
 	int irq;
 	int ret = 0;
 	int i;
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		pr_err("platform_get_resource error.\n");
-		return -ENODEV;
-	}
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
@@ -1172,6 +1165,7 @@ int fotg210_udc_probe(struct platform_device *pdev)
 		goto err;
 
 	fotg210->dev = dev;
+	fotg210->fotg = fotg;
 
 	/* It's OK not to supply this clock */
 	fotg210->pclk = devm_clk_get(dev, "PCLK");
@@ -1211,11 +1205,7 @@ int fotg210_udc_probe(struct platform_device *pdev)
 		fotg210->ep[i] = _ep[i];
 	}
 
-	fotg210->reg = ioremap(res->start, resource_size(res));
-	if (fotg210->reg == NULL) {
-		dev_err(dev, "ioremap error\n");
-		goto err_alloc;
-	}
+	fotg210->reg = fotg->base;
 
 	spin_lock_init(&fotg210->lock);
 
