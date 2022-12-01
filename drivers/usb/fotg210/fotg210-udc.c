@@ -1163,7 +1163,7 @@ int fotg210_udc_remove(struct platform_device *pdev)
 int fotg210_udc_probe(struct platform_device *pdev, struct fotg210 *fotg)
 {
 	struct fotg210_udc *fotg210 = NULL;
-	struct fotg210_ep *_ep[FOTG210_MAX_NUM_EP];
+	struct fotg210_ep *eps[FOTG210_MAX_NUM_EP];
 	struct device *dev = &pdev->dev;
 	int irq;
 	int ret = 0;
@@ -1200,10 +1200,10 @@ int fotg210_udc_probe(struct platform_device *pdev, struct fotg210 *fotg)
 	}
 
 	for (i = 0; i < FOTG210_MAX_NUM_EP; i++) {
-		_ep[i] = kzalloc(sizeof(struct fotg210_ep), GFP_KERNEL);
-		if (_ep[i] == NULL)
+		eps[i] = kzalloc(sizeof(struct fotg210_ep), GFP_KERNEL);
+		if (eps[i] == NULL)
 			goto err_alloc;
-		fotg210->ep[i] = _ep[i];
+		fotg210->ep[i] = eps[i];
 	}
 
 	fotg210->reg = fotg->base;
