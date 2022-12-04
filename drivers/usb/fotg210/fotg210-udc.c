@@ -1034,6 +1034,21 @@ static int fotg210_udc_start(struct usb_gadget *g,
 	value |= DMCR_GLINT_EN;
 	iowrite32(value, fotg210->reg + FOTG210_DMCR);
 
+	/* Pull D+ high */
+	value = ioread32(fotg210->reg + FOTG210_PHYTMSR);
+	value &= ~PHYTMSR_UNPLUG;
+	iowrite32(value, fotg210->reg + FOTG210_PHYTMSR);
+
+	/* Disable HNP */
+	value = ioread32(fotg210->reg + 0x80);
+	value &= ~BIT(1);
+	iowrite32(value, fotg210->reg + 0x80);
+
+	/* Enable bus request */
+	value = ioread32(fotg210->reg + 0x80);
+	value |= BIT(0);
+	iowrite32(value, fotg210->reg + 0x80);
+
 	return 0;
 }
 
