@@ -10,28 +10,13 @@
 
 #define MHZ (1000 * 1000)
 
-static u32 __init calc_cpu_clk(u32 reg020, u32 reg030, u32 reg810)
-{
-	u32 baseclk, cpudiv;
-
-	if (!(reg810 & BIT(4)))
-		return 48 * MHZ;
-
-	if (reg030 & BIT(4))
-		return 24 * MHZ;
-
-	baseclk = 24 * MHZ * (reg030 >> 24) / ((reg030 >> 16) & 0x1F);
-	cpudiv = 1 + ((reg020 >> 20) & 0xF);
-	return baseclk / cpudiv;
-}
-
 static void __init nspire_cx2_clk_setup(struct device_node *node)
 {
 	void __iomem *io;
 	struct clk_hw *hw;
 	const char *clk_name = node->name;
 	u32 reg020, reg030, reg810;
-	u32 cpuclk;
+	u32 baseclk, cpudiv, cpuclk;
 
 	io = of_iomap(node, 0);
 	if (!io)
@@ -43,7 +28,15 @@ static void __init nspire_cx2_clk_setup(struct device_node *node)
 
 	iounmap(io);
 
-	cpuclk = calc_cpu_clk(reg020, reg030, reg810);
+	if (!(reg810 & BIT(4)))
+		cpuclk = 48 * MHZ;
+	else if (reg030 & BIT(4))
+		cpuclk = 24 * MHZ;
+	else {
+		baseclk = 24 * MHZ * (reg030 >> 24) / ((reg030 >> 16) & 0x1F);
+		cpudiv = 1 + ((reg020 >> 20) & 0xF);
+		cpuclk = baseclk / cpudiv;
+	}
 
 	of_property_read_string(node, "clock-output-names", &clk_name);
 
