@@ -2468,7 +2468,7 @@ EXPORT_SYMBOL_GPL(acpi_dev_clear_dependencies);
  *
  * Check if the device is present and has no unmet dependencies.
  *
- * Return true if the device is ready for enumeratino. Otherwise, return false.
+ * Return true if the device is ready for enumeration. Otherwise, return false.
  */
 bool acpi_dev_ready_for_enumeration(const struct acpi_device *device)
 {
