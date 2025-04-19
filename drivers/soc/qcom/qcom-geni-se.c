@@ -196,6 +196,9 @@ u32 geni_se_get_qup_hw_version(struct geni_se *se)
 {
 	struct geni_wrapper *wrapper = se->wrapper;
 
+	if (!wrapper)
+		return 4u << 28;
+
 	return readl_relaxed(wrapper->base + QUP_HW_VER_REG);
 }
 EXPORT_SYMBOL_GPL(geni_se_get_qup_hw_version);
