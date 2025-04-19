@@ -1201,6 +1201,7 @@ static inline bool iort_iommu_driver_enabled(u8 type)
 {
 	switch (type) {
 	case ACPI_IORT_NODE_SMMU_V3:
+		return false;
 		return IS_ENABLED(CONFIG_ARM_SMMU_V3);
 	case ACPI_IORT_NODE_SMMU:
 		return IS_ENABLED(CONFIG_ARM_SMMU);
@@ -1781,8 +1782,6 @@ static __init const struct iort_dev_config *iort_get_dev_cfg(
 			struct acpi_iort_node *node)
 {
 	switch (node->type) {
-	case ACPI_IORT_NODE_SMMU_V3:
-		return &iort_arm_smmu_v3_cfg;
 	case ACPI_IORT_NODE_SMMU:
 		return &iort_arm_smmu_cfg;
 	case ACPI_IORT_NODE_PMCG:
