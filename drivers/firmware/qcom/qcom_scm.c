@@ -3,6 +3,7 @@
  * Copyright (C) 2015 Linaro Ltd.
  */
 
+#include <linux/acpi.h>
 #include <linux/arm-smccc.h>
 #include <linux/bitfield.h>
 #include <linux/bits.h>
@@ -1746,6 +1747,9 @@ static int qcom_scm_find_dload_address(struct device *dev, u64 *addr)
 	u32 offset;
 	int ret;
 
+	if (!np)
+		return 0;
+
 	tcsr = of_parse_phandle(np, "qcom,dload-mode", 0);
 	if (!tcsr)
 		return 0;
@@ -2007,14 +2011,27 @@ static const struct of_device_id qcom_scm_qseecom_allowlist[] __maybe_unused = {
 	{ }
 };
 
+#ifdef CONFIG_ACPI
+static struct acpi_platform_list qcom_scm_qseecom_acpi_allowlist[] = {
+	{ "LENOVO", "CB-01   ", 0x8380, ACPI_SIG_FADT, equal, "QSEECOM" },
+	{ }
+};
+#endif
+
 static bool qcom_scm_qseecom_machine_is_allowed(void)
 {
 	struct device_node *np;
 	bool match;
 
 	np = of_find_node_by_path("/");
-	if (!np)
+        if (!np) {
+#ifdef CONFIG_ACPI
+                if (acpi_match_platform_list(qcom_scm_qseecom_acpi_allowlist) >= 0)
+                        return true;
+#endif
+
 		return false;
+        }
 
 	match = of_match_node(qcom_scm_qseecom_allowlist, np);
 	of_node_put(np);
@@ -2213,17 +2230,20 @@ static int qcom_scm_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	scm->dev = &pdev->dev;
-	ret = qcom_scm_find_dload_address(&pdev->dev, &scm->dload_mode_addr);
-	if (ret < 0)
-		return ret;
 
 	init_completion(&scm->waitq_comp);
 	mutex_init(&scm->scm_bw_lock);
 
-	scm->path = devm_of_icc_get(&pdev->dev, NULL);
-	if (IS_ERR(scm->path))
-		return dev_err_probe(&pdev->dev, PTR_ERR(scm->path),
-				     "failed to acquire interconnect path\n");
+	ret = qcom_scm_find_dload_address(&pdev->dev, &scm->dload_mode_addr);
+	if (ret < 0)
+		return ret;
+
+	if (pdev->dev.of_node) {
+		scm->path = devm_of_icc_get(&pdev->dev, NULL);
+		if (IS_ERR(scm->path))
+			return dev_err_probe(&pdev->dev, PTR_ERR(scm->path),
+					"failed to acquire interconnect path\n");
+	}
 
 	scm->core_clk = devm_clk_get_optional(&pdev->dev, "core");
 	if (IS_ERR(scm->core_clk))
@@ -2279,14 +2299,17 @@ static int qcom_scm_probe(struct platform_device *pdev)
 	/*
 	 * Disable SDI if indicated by DT that it is enabled by default.
 	 */
-	if (of_property_read_bool(pdev->dev.of_node, "qcom,sdi-enabled") || !download_mode)
+	if (!pdev->dev.of_node || of_property_read_bool(pdev->dev.of_node, "qcom,sdi-enabled")
+		|| !download_mode)
 		qcom_scm_disable_sdi();
 
-	ret = of_reserved_mem_device_init(__scm->dev);
-	if (ret && ret != -ENODEV) {
-		dev_err_probe(__scm->dev, ret,
-			      "Failed to setup the reserved memory region for TZ mem\n");
-		goto err;
+	if (pdev->dev.of_node) {
+		ret = of_reserved_mem_device_init(__scm->dev);
+		if (ret && ret != -ENODEV) {
+			dev_err_probe(__scm->dev, ret,
+				"Failed to setup the reserved memory region for TZ mem\n");
+			goto err;
+		}
 	}
 
 	ret = qcom_tzmem_enable(__scm->dev);
@@ -2336,6 +2359,14 @@ static void qcom_scm_shutdown(struct platform_device *pdev)
 	qcom_scm_set_download_mode(QCOM_DLOAD_NODUMP);
 }
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id qcom_scm_acpi_match[] = {
+        { "QCOM04DD" },
+        { }
+};
+MODULE_DEVICE_TABLE(acpi, qcom_scm_acpi_match);
+#endif
+
 static const struct of_device_id qcom_scm_dt_match[] = {
 	{ .compatible = "qcom,scm" },
 
@@ -2354,6 +2385,7 @@ static struct platform_driver qcom_scm_driver = {
 	.driver = {
 		.name	= "qcom_scm",
 		.of_match_table = qcom_scm_dt_match,
+		.acpi_match_table = ACPI_PTR(qcom_scm_acpi_match),
 		.suppress_bind_attrs = true,
 	},
 	.probe = qcom_scm_probe,
