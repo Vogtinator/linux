@@ -201,6 +201,6 @@ Multiple-master IOMMU with configurable DMA window:
 
 		master {
 			/* master ID 42, 4 GiB DMA window starting at 0 */
-			iommus = <&{/iommu}  42  0  0x1 0x0>;
+			iommus = <&{/iommu}  42  0 0  0x1 0x0>;
 		};
 	};
