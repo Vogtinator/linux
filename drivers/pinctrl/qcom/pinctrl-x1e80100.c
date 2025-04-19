@@ -3,6 +3,7 @@
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
+#include <linux/acpi.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -1855,10 +1856,18 @@ static const struct of_device_id x1e80100_pinctrl_of_match[] = {
 	{ },
 };
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id x1e80100_pinctrl_acpi_match[] = {
+//	{ "QCOM0C0C" },
+	{ },
+};
+#endif
+
 static struct platform_driver x1e80100_pinctrl_driver = {
 	.driver = {
 		.name = "x1e80100-tlmm",
 		.of_match_table = x1e80100_pinctrl_of_match,
+		.acpi_match_table = ACPI_PTR(x1e80100_pinctrl_acpi_match),
 	},
 	.probe = x1e80100_pinctrl_probe,
 	.remove = msm_pinctrl_remove,

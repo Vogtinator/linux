@@ -1410,7 +1410,7 @@ static int msm_gpio_init(struct msm_pinctrl *pctrl)
 	if (msm_gpio_needs_valid_mask(pctrl))
 		chip->init_valid_mask = msm_gpio_init_valid_mask;
 
-	np = of_parse_phandle(pctrl->dev->of_node, "wakeup-parent", 0);
+	np = pctrl->dev->of_node ? of_parse_phandle(pctrl->dev->of_node, "wakeup-parent", 0) : NULL;
 	if (np) {
 		chip->irq.parent_domain = irq_find_matching_host(np,
 						 DOMAIN_BUS_WAKEUP);
@@ -1458,7 +1458,7 @@ static int msm_gpio_init(struct msm_pinctrl *pctrl)
 	 * files which don't set the "gpio-ranges" property or systems that
 	 * utilize ACPI the driver has to call gpiochip_add_pin_range().
 	 */
-	if (!of_property_present(pctrl->dev->of_node, "gpio-ranges")) {
+	if (!pctrl->dev->of_node || !of_property_present(pctrl->dev->of_node, "gpio-ranges")) {
 		ret = gpiochip_add_pin_range(&pctrl->chip,
 			dev_name(pctrl->dev), 0, 0, chip->ngpio);
 		if (ret) {
@@ -1540,9 +1540,11 @@ int msm_pinctrl_probe(struct platform_device *pdev,
 	pctrl->dev = &pdev->dev;
 	pctrl->soc = soc_data;
 	pctrl->chip = msm_gpio_template;
-	pctrl->intr_target_use_scm = of_device_is_compatible(
-					pctrl->dev->of_node,
-					"qcom,ipq8064-pinctrl");
+	if (pctrl->dev->of_node && of_device_is_compatible(
+						pctrl->dev->of_node,
+						"qcom,ipq8064-pinctrl")) {
+		pctrl->intr_target_use_scm = 1;
+	}
 
 	raw_spin_lock_init(&pctrl->lock);
 
