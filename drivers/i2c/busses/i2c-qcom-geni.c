@@ -166,7 +166,7 @@ static int geni_i2c_clk_map_idx(struct geni_i2c_dev *gi2c)
 {
 	const struct geni_i2c_clk_fld *itr;
 
-	if (clk_get_rate(gi2c->se.clk) == 32 * HZ_PER_MHZ)
+	if (gi2c->se.clk && clk_get_rate(gi2c->se.clk) == 32 * HZ_PER_MHZ)
 		itr = geni_i2c_clk_map_32mhz;
 	else
 		itr = geni_i2c_clk_map_19p2mhz;
@@ -734,8 +734,9 @@ static const struct i2c_algorithm geni_i2c_algo = {
 
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id geni_i2c_acpi_match[] = {
-	{ "QCOM0220"},
+	{ "QCOM0220" },
 	{ "QCOM0411" },
+	{ "QCOM0C10" },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, geni_i2c_acpi_match);
@@ -805,8 +806,12 @@ static int geni_i2c_probe(struct platform_device *pdev)
 	}
 
 	gi2c->se.clk = devm_clk_get(dev, "se");
-	if (IS_ERR(gi2c->se.clk) && !has_acpi_companion(dev))
-		return PTR_ERR(gi2c->se.clk);
+	if (IS_ERR(gi2c->se.clk)) {
+		if (!has_acpi_companion(dev))
+			return PTR_ERR(gi2c->se.clk);
+
+		gi2c->se.clk = NULL;
+	}
 
 	ret = device_property_read_u32(dev, "clock-frequency",
 				       &gi2c->clk_freq_out);
