@@ -2,6 +2,7 @@
 /*
  * Copyright (c) 2012-2015, 2017, 2021, The Linux Foundation. All rights reserved.
  */
+#include <linux/acpi.h>
 #include <linux/bitmap.h>
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -1806,7 +1807,11 @@ static int spmi_pmic_arb_probe(struct platform_device *pdev)
 	if (!pmic_arb)
 		return -ENOMEM;
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "core");
+	if (has_acpi_companion(dev))
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	else
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "core");
+
 	core = devm_ioremap(dev, res->start, resource_size(res));
 	if (!core)
 		return -ENOMEM;
@@ -1834,6 +1839,11 @@ static int spmi_pmic_arb_probe(struct platform_device *pdev)
 
 	dev_info(dev, "PMIC arbiter version %s (0x%x)\n",
 		 pmic_arb->ver_ops->ver_str, hw_ver);
+
+	if (!pdev->dev.of_node) {
+		dev_err(&pdev->dev, "ACPI not supported yet.\n");
+		return -EINVAL;
+	}
 
 	err = of_property_read_u32(pdev->dev.of_node, "qcom,channel", &channel);
 	if (err) {
@@ -1879,12 +1889,21 @@ static const struct of_device_id spmi_pmic_arb_match_table[] = {
 };
 MODULE_DEVICE_TABLE(of, spmi_pmic_arb_match_table);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id spmi_pmic_arb_acpi_match_table[] = {
+	{ "QCOM0C0B" },
+	{},
+};
+MODULE_DEVICE_TABLE(acpi, spmi_pmic_arb_acpi_match_table);
+#endif
+
 static struct platform_driver spmi_pmic_arb_driver = {
 	.probe		= spmi_pmic_arb_probe,
 	.remove		= spmi_pmic_arb_remove,
 	.driver		= {
 		.name	= "spmi_pmic_arb",
 		.of_match_table = spmi_pmic_arb_match_table,
+		.acpi_match_table = ACPI_PTR(spmi_pmic_arb_acpi_match_table),
 	},
 };
 module_platform_driver(spmi_pmic_arb_driver);
