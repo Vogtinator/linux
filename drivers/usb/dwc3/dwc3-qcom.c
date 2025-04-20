@@ -4,6 +4,7 @@
  * Inspired by dwc3-of-simple.c
  */
 
+#include <linux/acpi.h>
 #include <linux/cleanup.h>
 #include <linux/io.h>
 #include <linux/of.h>
@@ -55,6 +56,22 @@
 /* Qualcomm SoCs with multiport support has up to 4 ports */
 #define DWC3_QCOM_MAX_PORTS	4
 
+struct dwc3_acpi_port_info {
+	int			qusb2_phy_irq_index;
+	int			dp_hs_phy_irq_index;
+	int			dm_hs_phy_irq_index;
+	int			ss_phy_irq_index;
+};
+
+struct dwc3_acpi_pdata {
+	u32			qscratch_base_offset;
+	u32			qscratch_base_size;
+	u32			dwc3_core_base_size;
+	bool			is_urs;
+	int			num_ports;
+	struct dwc3_acpi_port_info	port_info[DWC3_QCOM_MAX_PORTS];
+};
+
 static const u32 pwr_evnt_irq_stat_reg[DWC3_QCOM_MAX_PORTS] = {
 	0x58,
 	0x1dc,
@@ -74,6 +91,7 @@ struct dwc3_qcom {
 	struct device		*dev;
 	void __iomem		*qscratch_base;
 	struct platform_device	*dwc3;
+	struct platform_device	*urs_usb;
 	struct clk		**clks;
 	int			num_clocks;
 	struct reset_control	*resets;
@@ -84,6 +102,8 @@ struct dwc3_qcom {
 	struct extcon_dev	*host_edev;
 	struct notifier_block	vbus_nb;
 	struct notifier_block	host_nb;
+
+	const struct dwc3_acpi_pdata *acpi_pdata;
 
 	enum usb_dr_mode	mode;
 	bool			is_suspended;
@@ -246,6 +266,9 @@ static int dwc3_qcom_interconnect_init(struct dwc3_qcom *qcom)
 	enum usb_device_speed max_speed;
 	struct device *dev = qcom->dev;
 	int ret;
+
+	if (has_acpi_companion(dev))
+		return 0;
 
 	qcom->icc_path_ddr = of_icc_get(dev, "usb-ddr");
 	if (IS_ERR(qcom->icc_path_ddr)) {
@@ -550,9 +573,13 @@ static int dwc3_qcom_request_irq(struct dwc3_qcom *qcom, int irq,
 static int dwc3_qcom_setup_port_irq(struct platform_device *pdev, int port_index, bool is_multiport)
 {
 	struct dwc3_qcom *qcom = platform_get_drvdata(pdev);
+	const struct dwc3_acpi_port_info *acpi_port = &qcom->acpi_pdata->port_info[port_index];
+	struct platform_device *pdev_irq_acpi = qcom->urs_usb ? qcom->urs_usb : pdev;
 	const char *irq_name;
 	int irq;
 	int ret;
+
+	BUG_ON(!is_multiport && port_index != 0);
 
 	if (is_multiport)
 		irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "dp_hs_phy_%d", port_index + 1);
@@ -561,7 +588,10 @@ static int dwc3_qcom_setup_port_irq(struct platform_device *pdev, int port_index
 	if (!irq_name)
 		return -ENOMEM;
 
-	irq = platform_get_irq_byname_optional(pdev, irq_name);
+	if (acpi_port)
+		irq = platform_get_irq_optional(pdev_irq_acpi, acpi_port->dp_hs_phy_irq_index);
+	else
+		irq = platform_get_irq_byname_optional(pdev, irq_name);
 	if (irq > 0) {
 		ret = dwc3_qcom_request_irq(qcom, irq, irq_name);
 		if (ret)
@@ -576,7 +606,10 @@ static int dwc3_qcom_setup_port_irq(struct platform_device *pdev, int port_index
 	if (!irq_name)
 		return -ENOMEM;
 
-	irq = platform_get_irq_byname_optional(pdev, irq_name);
+	if (acpi_port)
+		irq = platform_get_irq_optional(pdev_irq_acpi, acpi_port->dm_hs_phy_irq_index);
+	else
+		irq = platform_get_irq_byname_optional(pdev, irq_name);
 	if (irq > 0) {
 		ret = dwc3_qcom_request_irq(qcom, irq, irq_name);
 		if (ret)
@@ -591,7 +624,10 @@ static int dwc3_qcom_setup_port_irq(struct platform_device *pdev, int port_index
 	if (!irq_name)
 		return -ENOMEM;
 
-	irq = platform_get_irq_byname_optional(pdev, irq_name);
+	if (acpi_port)
+		irq = platform_get_irq_optional(pdev_irq_acpi, acpi_port->ss_phy_irq_index);
+	else
+		irq = platform_get_irq_byname_optional(pdev, irq_name);
 	if (irq > 0) {
 		ret = dwc3_qcom_request_irq(qcom, irq, irq_name);
 		if (ret)
@@ -602,7 +638,13 @@ static int dwc3_qcom_setup_port_irq(struct platform_device *pdev, int port_index
 	if (is_multiport)
 		return 0;
 
-	irq = platform_get_irq_byname_optional(pdev, "qusb2_phy");
+	if (acpi_port) {
+		if (acpi_port->qusb2_phy_irq_index >= 0)
+			irq = platform_get_irq_optional(pdev_irq_acpi, acpi_port->qusb2_phy_irq_index);
+		else
+			irq = -ENOENT;
+	} else
+		irq = platform_get_irq_byname_optional(pdev, "qusb2_phy");
 	if (irq > 0) {
 		ret = dwc3_qcom_request_irq(qcom, irq, "qusb2_phy");
 		if (ret)
@@ -613,7 +655,7 @@ static int dwc3_qcom_setup_port_irq(struct platform_device *pdev, int port_index
 	return 0;
 }
 
-static int dwc3_qcom_find_num_ports(struct platform_device *pdev)
+static int dwc3_qcom_of_find_num_ports(struct platform_device *pdev)
 {
 	char irq_name[14];
 	int port_num;
@@ -641,7 +683,11 @@ static int dwc3_qcom_setup_irq(struct platform_device *pdev)
 	int ret;
 	int i;
 
-	qcom->num_ports = dwc3_qcom_find_num_ports(pdev);
+	if (qcom->acpi_pdata)
+		qcom->num_ports = qcom->acpi_pdata->num_ports;
+	else
+		qcom->num_ports = dwc3_qcom_of_find_num_ports(pdev);
+
 	is_multiport = (qcom->num_ports > 1);
 
 	for (i = 0; i < qcom->num_ports; i++) {
@@ -700,6 +746,88 @@ static int dwc3_qcom_clk_init(struct dwc3_qcom *qcom, int count)
 	return 0;
 }
 
+static const struct property_entry dwc3_qcom_acpi_properties[] = {
+	PROPERTY_ENTRY_STRING("dr_mode", "host"),
+	{}
+};
+
+static const struct software_node dwc3_qcom_swnode = {
+	.properties = dwc3_qcom_acpi_properties,
+};
+
+static int dwc3_qcom_acpi_register_core(struct platform_device *pdev)
+{
+	struct dwc3_qcom	*qcom = platform_get_drvdata(pdev);
+	struct device		*dev = &pdev->dev;
+	struct resource		*res, *child_res = NULL;
+	struct platform_device	*pdev_irq = qcom->urs_usb ? qcom->urs_usb :
+							    pdev;
+	int			irq;
+	int			ret;
+
+	qcom->dwc3 = platform_device_alloc("dwc3", PLATFORM_DEVID_AUTO);
+	if (!qcom->dwc3)
+		return -ENOMEM;
+
+	qcom->dwc3->dev.parent = dev;
+	qcom->dwc3->dev.type = dev->type;
+	qcom->dwc3->dev.dma_mask = dev->dma_mask;
+	qcom->dwc3->dev.dma_parms = dev->dma_parms;
+	qcom->dwc3->dev.coherent_dma_mask = dev->coherent_dma_mask;
+
+	child_res = kcalloc(2, sizeof(*child_res), GFP_KERNEL);
+	if (!child_res) {
+		platform_device_put(qcom->dwc3);
+		return -ENOMEM;
+	}
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		dev_err(&pdev->dev, "failed to get memory resource\n");
+		ret = -ENODEV;
+		goto out;
+	}
+
+	child_res[0].flags = res->flags;
+	child_res[0].start = res->start;
+	child_res[0].end = child_res[0].start +
+		qcom->acpi_pdata->dwc3_core_base_size;
+
+	irq = platform_get_irq(pdev_irq, 0);
+	if (irq < 0) {
+		ret = irq;
+		goto out;
+	}
+	child_res[1].flags = IORESOURCE_IRQ;
+	child_res[1].start = child_res[1].end = irq;
+
+	ret = platform_device_add_resources(qcom->dwc3, child_res, 2);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to add resources\n");
+		goto out;
+	}
+
+	ret = device_add_software_node(&qcom->dwc3->dev, &dwc3_qcom_swnode);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "failed to add properties\n");
+		goto out;
+	}
+
+	ret = platform_device_add(qcom->dwc3);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to add device\n");
+		device_remove_software_node(&qcom->dwc3->dev);
+		goto out;
+	}
+	kfree(child_res);
+	return 0;
+
+out:
+	platform_device_put(qcom->dwc3);
+	kfree(child_res);
+	return ret;
+}
+
 static int dwc3_qcom_of_register_core(struct platform_device *pdev)
 {
 	struct dwc3_qcom	*qcom = platform_get_drvdata(pdev);
@@ -730,11 +858,57 @@ static int dwc3_qcom_of_register_core(struct platform_device *pdev)
 	return ret;
 }
 
+static struct platform_device *dwc3_qcom_create_urs_usb_platdev(struct device *dev)
+{
+	struct platform_device *urs_usb = NULL;
+	struct fwnode_handle *fwh;
+	struct acpi_device *adev;
+	char name[8];
+	int ret;
+	int id;
+
+	/* Figure out device id */
+	ret = sscanf(fwnode_get_name(dev->fwnode), "URS%d", &id);
+	if (!ret)
+		return NULL;
+
+	/* Find the child using name */
+	snprintf(name, sizeof(name), "USB%d", id);
+	fwh = fwnode_get_named_child_node(dev->fwnode, name);
+	if (!fwh)
+		return NULL;
+
+	adev = to_acpi_device_node(fwh);
+	if (!adev)
+		goto err_put_handle;
+
+	urs_usb = acpi_create_platform_device(adev, NULL);
+	if (IS_ERR_OR_NULL(urs_usb))
+		goto err_put_handle;
+
+	return urs_usb;
+
+err_put_handle:
+	fwnode_handle_put(fwh);
+
+	return urs_usb;
+}
+
+static void dwc3_qcom_destroy_urs_usb_platdev(struct platform_device *urs_usb)
+{
+	struct fwnode_handle *fwh = urs_usb->dev.fwnode;
+
+	platform_device_unregister(urs_usb);
+	fwnode_handle_put(fwh);
+}
+
 static int dwc3_qcom_probe(struct platform_device *pdev)
 {
 	struct device_node	*np = pdev->dev.of_node;
 	struct device		*dev = &pdev->dev;
 	struct dwc3_qcom	*qcom;
+	struct resource		*res;
+	struct resource		local_res;
 	int			ret, i;
 	bool			ignore_pipe_clk;
 	bool			wakeup_source;
@@ -745,6 +919,14 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, qcom);
 	qcom->dev = &pdev->dev;
+
+	if (has_acpi_companion(dev)) {
+		qcom->acpi_pdata = acpi_device_get_match_data(dev);
+		if (!qcom->acpi_pdata) {
+			dev_err(&pdev->dev, "no supporting ACPI device data\n");
+			return -EINVAL;
+		}
+	}
 
 	qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
 	if (IS_ERR(qcom->resets)) {
@@ -772,16 +954,40 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 		goto reset_assert;
 	}
 
-	qcom->qscratch_base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	memcpy(&local_res, res, sizeof(struct resource));
+
+	/* The ACPI memory resource points to the DWC3 core,
+	 * while this needs the qscratch area. */
+	if (qcom->acpi_pdata) {
+		local_res.start = local_res.start +
+			qcom->acpi_pdata->qscratch_base_offset;
+		local_res.end = local_res.start +
+			qcom->acpi_pdata->qscratch_base_size;
+
+		if (qcom->acpi_pdata->is_urs) {
+			qcom->urs_usb = dwc3_qcom_create_urs_usb_platdev(dev);
+			if (IS_ERR_OR_NULL(qcom->urs_usb)) {
+				dev_err(dev, "failed to create URS USB platdev\n");
+				if (!qcom->urs_usb)
+					ret = -ENODEV;
+				else
+					ret = PTR_ERR(qcom->urs_usb);
+				goto clk_disable;
+			}
+		}
+	}
+
+	qcom->qscratch_base = devm_ioremap_resource(dev, &local_res);
 	if (IS_ERR(qcom->qscratch_base)) {
 		ret = PTR_ERR(qcom->qscratch_base);
-		goto clk_disable;
+		goto free_urs;
 	}
 
 	ret = dwc3_qcom_setup_irq(pdev);
 	if (ret) {
 		dev_err(dev, "failed to setup IRQs, err=%d\n", ret);
-		goto clk_disable;
+		goto free_urs;
 	}
 
 	/*
@@ -793,10 +999,13 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	if (ignore_pipe_clk)
 		dwc3_qcom_select_utmi_clk(qcom);
 
-	ret = dwc3_qcom_of_register_core(pdev);
+	if (np)
+		ret = dwc3_qcom_of_register_core(pdev);
+	else
+		ret = dwc3_qcom_acpi_register_core(pdev);
 	if (ret) {
 		dev_err(dev, "failed to register DWC3 Core, err=%d\n", ret);
-		goto clk_disable;
+		goto free_urs;
 	}
 
 	ret = dwc3_qcom_interconnect_init(qcom);
@@ -828,8 +1037,16 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 interconnect_exit:
 	dwc3_qcom_interconnect_exit(qcom);
 depopulate:
-	of_platform_depopulate(&pdev->dev);
+	if (np) {
+		of_platform_depopulate(&pdev->dev);
+	} else {
+		device_remove_software_node(&qcom->dwc3->dev);
+		platform_device_del(qcom->dwc3);
+	}
 	platform_device_put(qcom->dwc3);
+free_urs:
+	if (qcom->urs_usb)
+		dwc3_qcom_destroy_urs_usb_platdev(qcom->urs_usb);
 clk_disable:
 	for (i = qcom->num_clocks - 1; i >= 0; i--) {
 		clk_disable_unprepare(qcom->clks[i]);
@@ -844,11 +1061,21 @@ reset_assert:
 static void dwc3_qcom_remove(struct platform_device *pdev)
 {
 	struct dwc3_qcom *qcom = platform_get_drvdata(pdev);
+	struct device_node *np = pdev->dev.of_node;
 	struct device *dev = &pdev->dev;
 	int i;
 
-	of_platform_depopulate(&pdev->dev);
+	if (np) {
+		of_platform_depopulate(&pdev->dev);
+	} else {
+		device_remove_software_node(&qcom->dwc3->dev);
+		platform_device_del(qcom->dwc3);
+	}
+
 	platform_device_put(qcom->dwc3);
+
+	if (qcom->urs_usb)
+		dwc3_qcom_destroy_urs_usb_platdev(qcom->urs_usb);
 
 	for (i = qcom->num_clocks - 1; i >= 0; i--) {
 		clk_disable_unprepare(qcom->clks[i]);
@@ -919,6 +1146,106 @@ static const struct of_device_id dwc3_qcom_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, dwc3_qcom_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct dwc3_acpi_pdata sdm845_acpi_pdata = {
+	.qscratch_base_offset = SDM845_QSCRATCH_BASE_OFFSET,
+	.qscratch_base_size = SDM845_QSCRATCH_SIZE,
+	.dwc3_core_base_size = SDM845_DWC3_CORE_SIZE,
+	.num_ports = 1,
+	.port_info = {
+		{
+			.qusb2_phy_irq_index = 1,
+			.dp_hs_phy_irq_index = 4,
+			.dm_hs_phy_irq_index = 3,
+			.ss_phy_irq_index = 2,
+		},
+	},
+};
+
+static const struct dwc3_acpi_pdata sdm845_acpi_urs_pdata = {
+	.qscratch_base_offset = SDM845_QSCRATCH_BASE_OFFSET,
+	.qscratch_base_size = SDM845_QSCRATCH_SIZE,
+	.dwc3_core_base_size = SDM845_DWC3_CORE_SIZE,
+	.is_urs = true,
+	.num_ports = 1,
+	.port_info = {
+		{
+			.qusb2_phy_irq_index = 1,
+			.dp_hs_phy_irq_index = 4,
+			.dm_hs_phy_irq_index = 3,
+			.ss_phy_irq_index = 2,
+		},
+	},
+};
+
+static const struct dwc3_acpi_pdata qc8380_acpi_pdata = {
+	.qscratch_base_offset = SDM845_QSCRATCH_BASE_OFFSET,
+	.qscratch_base_size = SDM845_QSCRATCH_SIZE,
+	.dwc3_core_base_size = SDM845_DWC3_CORE_SIZE,
+	.num_ports = 1,
+	.port_info = {
+		{
+			.qusb2_phy_irq_index = -1,
+			.dp_hs_phy_irq_index = 4,
+			.dm_hs_phy_irq_index = 3,
+			.ss_phy_irq_index = 2,
+		},
+	},
+};
+
+static const struct dwc3_acpi_pdata qc8380_urs_acpi_pdata = {
+	.qscratch_base_offset = SDM845_QSCRATCH_BASE_OFFSET,
+	.qscratch_base_size = SDM845_QSCRATCH_SIZE,
+	.dwc3_core_base_size = SDM845_DWC3_CORE_SIZE,
+	.is_urs = true,
+	.num_ports = 1,
+	.port_info = {
+		{
+			.qusb2_phy_irq_index = -1,
+			.dp_hs_phy_irq_index = 4,
+			.dm_hs_phy_irq_index = 3,
+			.ss_phy_irq_index = 2,
+		},
+	},
+};
+
+static const struct dwc3_acpi_pdata qc8380_mp_acpi_pdata = {
+	.qscratch_base_offset = SDM845_QSCRATCH_BASE_OFFSET,
+	.qscratch_base_size = SDM845_QSCRATCH_SIZE,
+	.dwc3_core_base_size = SDM845_DWC3_CORE_SIZE,
+	.num_ports = 2,
+	.port_info = {
+		{
+			.qusb2_phy_irq_index = -1,
+			.dp_hs_phy_irq_index = 6,
+			.dm_hs_phy_irq_index = 5,
+			.ss_phy_irq_index = 2,
+		},
+		{
+			.qusb2_phy_irq_index = -1,
+			.dp_hs_phy_irq_index = 8,
+			.dm_hs_phy_irq_index = 7,
+			.ss_phy_irq_index = 4,
+		},
+	},
+};
+
+static const struct acpi_device_id dwc3_qcom_acpi_match[] = {
+	{ "QCOM2430", (unsigned long)&sdm845_acpi_pdata },
+	{ "QCOM0304", (unsigned long)&sdm845_acpi_urs_pdata },
+	{ "QCOM0497", (unsigned long)&sdm845_acpi_urs_pdata },
+	{ "QCOM04A6", (unsigned long)&sdm845_acpi_pdata },
+	{ "QCOM0C8B", (unsigned long)&qc8380_urs_acpi_pdata },
+	{ "QCOM0C8C", (unsigned long)&qc8380_urs_acpi_pdata },
+	{ "QCOM0CA1", (unsigned long)&qc8380_acpi_pdata },
+	{ "QCOM0D07", (unsigned long)&qc8380_urs_acpi_pdata },
+	{ "QCOM0D08", (unsigned long)&qc8380_mp_acpi_pdata },
+	{ "QCOM0D09", (unsigned long)&qc8380_acpi_pdata },
+	{ },
+};
+MODULE_DEVICE_TABLE(acpi, dwc3_qcom_acpi_match);
+#endif
+
 static struct platform_driver dwc3_qcom_driver = {
 	.probe		= dwc3_qcom_probe,
 	.remove		= dwc3_qcom_remove,
@@ -926,6 +1253,7 @@ static struct platform_driver dwc3_qcom_driver = {
 		.name	= "dwc3-qcom",
 		.pm	= &dwc3_qcom_dev_pm_ops,
 		.of_match_table	= dwc3_qcom_of_match,
+		.acpi_match_table = ACPI_PTR(dwc3_qcom_acpi_match),
 	},
 };
 
