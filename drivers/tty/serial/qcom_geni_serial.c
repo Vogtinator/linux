@@ -4,6 +4,7 @@
 /* Disable MMIO tracing to prevent excessive logging of unwanted MMIO traces */
 #define __DISABLE_TRACE_MMIO__
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/console.h>
 #include <linux/io.h>
@@ -1634,6 +1635,16 @@ static const struct uart_ops qcom_geni_uart_pops = {
 	.pm = qcom_geni_serial_pm,
 };
 
+static const struct qcom_geni_device_data qcom_geni_console_data = {
+	.console = true,
+	.mode = GENI_SE_FIFO,
+};
+
+static const struct qcom_geni_device_data qcom_geni_uart_data = {
+	.console = false,
+	.mode = GENI_SE_DMA,
+};
+
 static int qcom_geni_serial_probe(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -1645,18 +1656,24 @@ static int qcom_geni_serial_probe(struct platform_device *pdev)
 	struct uart_driver *drv;
 	const struct qcom_geni_device_data *data;
 
-	data = of_device_get_match_data(&pdev->dev);
-	if (!data)
-		return -EINVAL;
-
-	if (data->console) {
+	if (ACPI_HANDLE(&pdev->dev)) {
+		data = &qcom_geni_console_data;
 		drv = &qcom_geni_console_driver;
-		line = of_alias_get_id(pdev->dev.of_node, "serial");
+		line = 0; // TODO!
 	} else {
-		drv = &qcom_geni_uart_driver;
-		line = of_alias_get_id(pdev->dev.of_node, "serial");
-		if (line == -ENODEV) /* compat with non-standard aliases */
-			line = of_alias_get_id(pdev->dev.of_node, "hsuart");
+		data = of_device_get_match_data(&pdev->dev);
+		if (!data)
+			return -EINVAL;
+
+		if (data->console) {
+			drv = &qcom_geni_console_driver;
+			line = of_alias_get_id(pdev->dev.of_node, "serial");
+		} else {
+			drv = &qcom_geni_uart_driver;
+			line = of_alias_get_id(pdev->dev.of_node, "serial");
+			if (line == -ENODEV) /* compat with non-standard aliases */
+				line = of_alias_get_id(pdev->dev.of_node, "hsuart");
+		}
 	}
 
 	port = get_port_from_line(line, data->console);
@@ -1675,7 +1692,7 @@ static int qcom_geni_serial_probe(struct platform_device *pdev)
 	port->se.dev = &pdev->dev;
 	port->se.wrapper = dev_get_drvdata(pdev->dev.parent);
 	port->se.clk = devm_clk_get(&pdev->dev, "se");
-	if (IS_ERR(port->se.clk)) {
+	if (IS_ERR(port->se.clk) && !has_acpi_companion(&pdev->dev)) {
 		ret = PTR_ERR(port->se.clk);
 		dev_err(&pdev->dev, "Err getting SE Core clk %d\n", ret);
 		return ret;
@@ -1723,20 +1740,22 @@ static int qcom_geni_serial_probe(struct platform_device *pdev)
 	if (!data->console)
 		port->wakeup_irq = platform_get_irq_optional(pdev, 1);
 
-	if (of_property_read_bool(pdev->dev.of_node, "rx-tx-swap"))
-		port->rx_tx_swap = true;
+	if (pdev->dev.of_node) {
+		if (of_property_read_bool(pdev->dev.of_node, "rx-tx-swap"))
+			port->rx_tx_swap = true;
 
-	if (of_property_read_bool(pdev->dev.of_node, "cts-rts-swap"))
-		port->cts_rts_swap = true;
+		if (of_property_read_bool(pdev->dev.of_node, "cts-rts-swap"))
+			port->cts_rts_swap = true;
 
-	ret = devm_pm_opp_set_clkname(&pdev->dev, "se");
-	if (ret)
-		return ret;
-	/* OPP table is optional */
-	ret = devm_pm_opp_of_add_table(&pdev->dev);
-	if (ret && ret != -ENODEV) {
-		dev_err(&pdev->dev, "invalid OPP table in device tree\n");
-		return ret;
+		ret = devm_pm_opp_set_clkname(&pdev->dev, "se");
+		if (ret)
+			return ret;
+		/* OPP table is optional */
+		ret = devm_pm_opp_of_add_table(&pdev->dev);
+		if (ret && ret != -ENODEV) {
+			dev_err(&pdev->dev, "invalid OPP table in device tree\n");
+			return ret;
+		}
 	}
 
 	port->private_data.drv = drv;
@@ -1811,16 +1830,6 @@ static int qcom_geni_serial_resume(struct device *dev)
 	return ret;
 }
 
-static const struct qcom_geni_device_data qcom_geni_console_data = {
-	.console = true,
-	.mode = GENI_SE_FIFO,
-};
-
-static const struct qcom_geni_device_data qcom_geni_uart_data = {
-	.console = false,
-	.mode = GENI_SE_DMA,
-};
-
 static const struct dev_pm_ops qcom_geni_serial_pm_ops = {
 	SYSTEM_SLEEP_PM_OPS(qcom_geni_serial_suspend, qcom_geni_serial_resume)
 };
@@ -1838,12 +1847,21 @@ static const struct of_device_id qcom_geni_serial_match_table[] = {
 };
 MODULE_DEVICE_TABLE(of, qcom_geni_serial_match_table);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id qcom_geni_serial_acpi_match_table[] = {
+	{ "QCOM0C16" },
+	{}
+};
+MODULE_DEVICE_TABLE(acpi, qcom_geni_serial_acpi_match_table);
+#endif
+
 static struct platform_driver qcom_geni_serial_platform_driver = {
 	.remove = qcom_geni_serial_remove,
 	.probe = qcom_geni_serial_probe,
 	.driver = {
 		.name = "qcom_geni_serial",
 		.of_match_table = qcom_geni_serial_match_table,
+		.acpi_match_table = ACPI_PTR(qcom_geni_serial_acpi_match_table),
 		.pm = &qcom_geni_serial_pm_ops,
 	},
 };
