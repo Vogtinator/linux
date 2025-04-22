@@ -5,6 +5,9 @@
  * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  */
 
+#define DEBUG
+
+#include <linux/acpi.h>
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/mmc/mmc.h>
@@ -2424,6 +2427,15 @@ static const struct of_device_id sdhci_msm_dt_match[] = {
 
 MODULE_DEVICE_TABLE(of, sdhci_msm_dt_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id sdhci_msm_acpi_match[] = {
+	{.id = "QCOM2466", .driver_data = &sdhci_msm_v5_var},
+	{},
+};
+
+MODULE_DEVICE_TABLE(acpi, sdhci_msm_acpi_match);
+#endif
+
 static const struct sdhci_ops sdhci_msm_ops = {
 	.reset = sdhci_and_cqhci_reset,
 	.set_clock = sdhci_msm_set_clock,
@@ -2536,7 +2548,10 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	 * Based on the compatible string, load the required msm host info from
 	 * the data associated with the version info.
 	 */
-	var_info = of_device_get_match_data(&pdev->dev);
+	if (node)
+		var_info = of_device_get_match_data(&pdev->dev);
+	else
+		var_info = acpi_driver_data(ACPI_COMPANION(&pdev->dev));
 
 	msm_host->mci_removed = var_info->mci_removed;
 	msm_host->restore_dll_config = var_info->restore_dll_config;
@@ -2554,87 +2569,89 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	if (ret)
 		goto pltfm_free;
 
-	/* Setup SDCC bus voter clock. */
-	msm_host->bus_clk = devm_clk_get(&pdev->dev, "bus");
-	if (!IS_ERR(msm_host->bus_clk)) {
-		/* Vote for max. clk rate for max. performance */
-		ret = clk_set_rate(msm_host->bus_clk, INT_MAX);
+	if (node) {
+		/* Setup SDCC bus voter clock. */
+		msm_host->bus_clk = devm_clk_get(&pdev->dev, "bus");
+		if (!IS_ERR(msm_host->bus_clk)) {
+			/* Vote for max. clk rate for max. performance */
+			ret = clk_set_rate(msm_host->bus_clk, INT_MAX);
+			if (ret)
+				goto pltfm_free;
+			ret = clk_prepare_enable(msm_host->bus_clk);
+			if (ret)
+				goto pltfm_free;
+		}
+
+		/* Setup main peripheral bus clock */
+		clk = devm_clk_get(&pdev->dev, "iface");
+		if (IS_ERR(clk)) {
+			ret = PTR_ERR(clk);
+			dev_err(&pdev->dev, "Peripheral clk setup failed (%d)\n", ret);
+			goto bus_clk_disable;
+		}
+		msm_host->bulk_clks[1].clk = clk;
+
+		/* Setup SDC MMC clock */
+		clk = devm_clk_get(&pdev->dev, "core");
+		if (IS_ERR(clk)) {
+			ret = PTR_ERR(clk);
+			dev_err(&pdev->dev, "SDC MMC clk setup failed (%d)\n", ret);
+			goto bus_clk_disable;
+		}
+		msm_host->bulk_clks[0].clk = clk;
+
+		/* Check for optional interconnect paths */
+		ret = dev_pm_opp_of_find_icc_paths(&pdev->dev, NULL);
 		if (ret)
-			goto pltfm_free;
-		ret = clk_prepare_enable(msm_host->bus_clk);
+			goto bus_clk_disable;
+
+		ret = devm_pm_opp_set_clkname(&pdev->dev, "core");
 		if (ret)
-			goto pltfm_free;
-	}
+			goto bus_clk_disable;
 
-	/* Setup main peripheral bus clock */
-	clk = devm_clk_get(&pdev->dev, "iface");
-	if (IS_ERR(clk)) {
-		ret = PTR_ERR(clk);
-		dev_err(&pdev->dev, "Peripheral clk setup failed (%d)\n", ret);
-		goto bus_clk_disable;
-	}
-	msm_host->bulk_clks[1].clk = clk;
+		/* OPP table is optional */
+		ret = devm_pm_opp_of_add_table(&pdev->dev);
+		if (ret && ret != -ENODEV) {
+			dev_err(&pdev->dev, "Invalid OPP table in Device tree\n");
+			goto bus_clk_disable;
+		}
 
-	/* Setup SDC MMC clock */
-	clk = devm_clk_get(&pdev->dev, "core");
-	if (IS_ERR(clk)) {
-		ret = PTR_ERR(clk);
-		dev_err(&pdev->dev, "SDC MMC clk setup failed (%d)\n", ret);
-		goto bus_clk_disable;
-	}
-	msm_host->bulk_clks[0].clk = clk;
+		/* Vote for maximum clock rate for maximum performance */
+		ret = dev_pm_opp_set_rate(&pdev->dev, INT_MAX);
+		if (ret)
+			dev_warn(&pdev->dev, "core clock boost failed\n");
 
-	 /* Check for optional interconnect paths */
-	ret = dev_pm_opp_of_find_icc_paths(&pdev->dev, NULL);
-	if (ret)
-		goto bus_clk_disable;
+		clk = devm_clk_get(&pdev->dev, "cal");
+		if (IS_ERR(clk))
+			clk = NULL;
+		msm_host->bulk_clks[2].clk = clk;
 
-	ret = devm_pm_opp_set_clkname(&pdev->dev, "core");
-	if (ret)
-		goto bus_clk_disable;
+		clk = devm_clk_get(&pdev->dev, "sleep");
+		if (IS_ERR(clk))
+			clk = NULL;
+		msm_host->bulk_clks[3].clk = clk;
 
-	/* OPP table is optional */
-	ret = devm_pm_opp_of_add_table(&pdev->dev);
-	if (ret && ret != -ENODEV) {
-		dev_err(&pdev->dev, "Invalid OPP table in Device tree\n");
-		goto bus_clk_disable;
-	}
+		ret = clk_bulk_prepare_enable(ARRAY_SIZE(msm_host->bulk_clks),
+					msm_host->bulk_clks);
+		if (ret)
+			goto bus_clk_disable;
 
-	/* Vote for maximum clock rate for maximum performance */
-	ret = dev_pm_opp_set_rate(&pdev->dev, INT_MAX);
-	if (ret)
-		dev_warn(&pdev->dev, "core clock boost failed\n");
+		/*
+		* xo clock is needed for FLL feature of cm_dll.
+		* In case if xo clock is not mentioned in DT, warn and proceed.
+		*/
+		msm_host->xo_clk = devm_clk_get(&pdev->dev, "xo");
+		if (IS_ERR(msm_host->xo_clk)) {
+			ret = PTR_ERR(msm_host->xo_clk);
+			dev_warn(&pdev->dev, "TCXO clk not present (%d)\n", ret);
+		}
 
-	clk = devm_clk_get(&pdev->dev, "cal");
-	if (IS_ERR(clk))
-		clk = NULL;
-	msm_host->bulk_clks[2].clk = clk;
-
-	clk = devm_clk_get(&pdev->dev, "sleep");
-	if (IS_ERR(clk))
-		clk = NULL;
-	msm_host->bulk_clks[3].clk = clk;
-
-	ret = clk_bulk_prepare_enable(ARRAY_SIZE(msm_host->bulk_clks),
-				      msm_host->bulk_clks);
-	if (ret)
-		goto bus_clk_disable;
-
-	/*
-	 * xo clock is needed for FLL feature of cm_dll.
-	 * In case if xo clock is not mentioned in DT, warn and proceed.
-	 */
-	msm_host->xo_clk = devm_clk_get(&pdev->dev, "xo");
-	if (IS_ERR(msm_host->xo_clk)) {
-		ret = PTR_ERR(msm_host->xo_clk);
-		dev_warn(&pdev->dev, "TCXO clk not present (%d)\n", ret);
-	}
-
-	if (!msm_host->mci_removed) {
-		msm_host->core_mem = devm_platform_ioremap_resource(pdev, 1);
-		if (IS_ERR(msm_host->core_mem)) {
-			ret = PTR_ERR(msm_host->core_mem);
-			goto clk_disable;
+		if (!msm_host->mci_removed) {
+			msm_host->core_mem = devm_platform_ioremap_resource(pdev, 1);
+			if (IS_ERR(msm_host->core_mem)) {
+				ret = PTR_ERR(msm_host->core_mem);
+				goto clk_disable;
+			}
 		}
 	}
 
@@ -2863,6 +2880,7 @@ static struct platform_driver sdhci_msm_driver = {
 	.driver = {
 		   .name = "sdhci_msm",
 		   .of_match_table = sdhci_msm_dt_match,
+		   //.acpi_match_table = ACPI_PTR(sdhci_msm_acpi_match),
 		   .pm = &sdhci_msm_pm_ops,
 		   .probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
