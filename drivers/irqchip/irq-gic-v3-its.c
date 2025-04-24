@@ -1191,6 +1191,11 @@ static int its_wait_for_range_completion(struct its_node *its,
 		if (linear_idx >= to_idx)
 			break;
 
+		if (rd_idx & GITS_CREADR_STALLED) {
+			pr_err_ratelimited("ITS stall (%llu)\n", rd_idx);
+			return -1;
+		}
+
 		count--;
 		if (!count) {
 			pr_err_ratelimited("ITS queue timeout (%llu %llu)\n",

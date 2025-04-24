@@ -491,7 +491,9 @@
 #define GITS_BASER_TYPE_RESERVED6	6
 #define GITS_BASER_TYPE_RESERVED7	7
 
-#define GITS_LVL1_ENTRY_SIZE           (8UL)
+#define GITS_CREADR_STALLED		(1)
+
+#define GITS_LVL1_ENTRY_SIZE		(8UL)
 
 /*
  * ITS commands
