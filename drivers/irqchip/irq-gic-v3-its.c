@@ -48,6 +48,7 @@
 #define ITS_FLAGS_WORKAROUND_CAVIUM_23144	(1ULL << 2)
 #define ITS_FLAGS_FORCE_NON_SHAREABLE		(1ULL << 3)
 #define ITS_FLAGS_WORKAROUND_HISILICON_162100801	(1ULL << 4)
+#define ITS_FLAGS_WORKAROUND_QHEE		(1ULL << 5)
 
 #define RD_LOCAL_LPI_ENABLED                    BIT(0)
 #define RD_LOCAL_PENDTABLE_PREALLOCATED         BIT(1)
@@ -3596,6 +3597,13 @@ static int its_msi_prepare(struct irq_domain *domain, struct device *dev,
 		return -EINVAL;
 	}
 
+	/* Sigh, firmware. */
+	if ((its->flags & ITS_FLAGS_WORKAROUND_QHEE) &&
+            (dev_id < 0xc0000 || dev_id >= 0xf0000)) {
+		pr_warn("Broken ITS cannot handle devID %x\n", dev_id);
+		return -ENODEV;
+	}
+
 	mutex_lock(&its->dev_alloc_lock);
 	its_dev = its_find_device(its, dev_id);
 	if (its_dev) {
@@ -4898,6 +4906,19 @@ static bool __maybe_unused its_enable_rk3568002(void *data)
 	return true;
 }
 
+static bool __maybe_unused its_enable_quirk_qhee(void *data)
+{
+	struct its_node *its = data;
+
+	// It's possible that QHEE passes through the IIDR unmodified.
+	// In that case, the quirk should only be applied if we are
+	// running in EL1.
+
+	its->flags |= ITS_FLAGS_WORKAROUND_QHEE;
+	return true;
+}
+
+
 static const struct gic_quirk its_quirks[] = {
 #ifdef CONFIG_CAVIUM_ERRATUM_22375
 	{
@@ -4971,6 +4992,16 @@ static const struct gic_quirk its_quirks[] = {
 		.iidr   = 0x0201743b,
 		.mask   = 0xffffffff,
 		.init   = its_enable_rk3568002,
+	},
+#endif
+#if 1
+// TODO: Create Kconfig
+// #ifdef CONFIG_QUALCOMM_BROKEN_QHEE_ITS
+	{
+		.desc   = "ITS: Broken ITS emulation in QHEE",
+		.iidr   = 0x47000070,
+		.mask   = 0xffffffff,
+		.init   = its_enable_quirk_qhee,
 	},
 #endif
 	{
